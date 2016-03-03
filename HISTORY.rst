@@ -3,6 +3,42 @@ History
 -------
 
 
+5.0.8 (2016-02-24)
+++++++++++++++++++
+
+- fix bug in status bar element registration
+
+
+5.0.7 (2016-02-24)
+++++++++++++++++++
+
+- only update status bar if it exists
+
+
+5.0.6 (2016-02-24)
+++++++++++++++++++
+
+- randomize status bar element name to prevent conflicts if package reloaded
+
+
+5.0.5 (2016-02-24)
+++++++++++++++++++
+
+- shorten status bar text unless there was an error to display
+
+
+5.0.4 (2016-02-23)
+++++++++++++++++++
+
+- new status bar menu item
+
+
+5.0.3 (2016-02-23)
+++++++++++++++++++
+
+- detect project name from open project folders
+
+
 5.0.2 (2015-11-29)
 ++++++++++++++++++
 

@@ -12,6 +12,8 @@ unloadHandler = null
 lastHeartbeat = 0
 lastFile = ''
 apiKey = null
+statusBarTileView = null
+pluginReady = false
 
 # package dependencies
 AdmZip = require 'adm-zip'
@@ -22,6 +24,8 @@ execFile = require('child_process').execFile
 request = require 'request'
 rimraf = require 'rimraf'
 ini = require 'ini'
+
+StatusBarTileView = require './status-bar-tile-view'
 
 module.exports =
   config:
@@ -66,6 +70,23 @@ module.exports =
     cleanupOnUninstall()
     setupEventHandlers()
     setApiKey()
+    pluginReady = true
+    statusBarTileView?.setTitle('WakaTime initialized')
+    statusBarTileView?.setStatus()
+
+  consumeStatusBar: (statusBar) ->
+    statusBarTileView = new StatusBarTileView()
+    statusBarTileView.init()
+    @statusBarTile = statusBar.addRightTile(item: statusBarTileView, priority: 300)
+    if pluginReady
+      statusBarTileView.setTitle('WakaTime initialized')
+      statusBarTileView.setStatus()
+
+  deactivate: ->
+    @statusBarTile?.destroy()
+    statusBarTileView?.destroy()
+    statusBarTileView = null
+
 
 getUserHome = ->
   process.env[if process.platform == 'win32' then 'USERPROFILE' else 'HOME'] || ''
@@ -147,47 +168,12 @@ pythonLocation = (callback, locations) ->
         "python",
         "/usr/local/bin/python",
         "/usr/bin/python",
-        "\\python37\\pythonw",
-        "\\Python37\\pythonw",
-        "\\python36\\pythonw",
-        "\\Python36\\pythonw",
-        "\\python35\\pythonw",
-        "\\Python35\\pythonw",
-        "\\python34\\pythonw",
-        "\\Python34\\pythonw",
-        "\\python33\\pythonw",
-        "\\Python33\\pythonw",
-        "\\python32\\pythonw",
-        "\\Python32\\pythonw",
-        "\\python31\\pythonw",
-        "\\Python31\\pythonw",
-        "\\python30\\pythonw",
-        "\\Python30\\pythonw",
-        "\\python27\\pythonw",
-        "\\Python27\\pythonw",
-        "\\python26\\pythonw",
-        "\\Python26\\pythonw",
-        "\\python37\\python",
-        "\\Python37\\python",
-        "\\python36\\python",
-        "\\Python36\\python",
-        "\\python35\\python",
-        "\\Python35\\python",
-        "\\python34\\python",
-        "\\Python34\\python",
-        "\\python33\\python",
-        "\\Python33\\python",
-        "\\python32\\python",
-        "\\Python32\\python",
-        "\\python31\\python",
-        "\\Python31\\python",
-        "\\python30\\python",
-        "\\Python30\\python",
-        "\\python27\\python",
-        "\\Python27\\python",
-        "\\python26\\python",
-        "\\Python26\\python",
       ]
+      i = 26
+      while i < 50
+        locations.push '\\python' + i + '\\pythonw'
+        locations.push '\\Python' + i + '\\pythonw'
+        i++
     args = ['--version']
     if locations.length is 0
       callback(null)
@@ -322,18 +308,30 @@ unzip = (file, outputDir, callback) ->
         callback()
 
 sendHeartbeat = (file, lineno, isWrite) ->
+  if not file.path? or file.path is undefined or fileIsIgnored(file.path)
+    return
+
   time = Date.now()
-  if isWrite or enoughTimePassed(time) or lastFile isnt file.path
-    if not file.path? or file.path is undefined or fileIsIgnored(file.path)
-      return
+  currentFile = file.path
+  if isWrite or enoughTimePassed(time) or lastFile isnt currentFile
     pythonLocation (python) ->
       return unless python? && apiKey?
-      args = [cliLocation(), '--file', file.path, '--key', apiKey, '--plugin', 'atom-wakatime/' + packageVersion]
+      args = [cliLocation(), '--file', currentFile, '--key', apiKey, '--plugin', 'atom-wakatime/' + packageVersion]
       if isWrite
         args.push('--write')
       if lineno?
         args.push('--lineno')
         args.push(lineno)
+
+      if atom.project.contains(file.path)
+        currentFile = file.path
+        for rootDir in atom.project.rootDirectories
+          realPath = rootDir.realPath
+          if currentFile.indexOf(realPath) > -1
+            args.push('--alternate-project')
+            args.push(path.basename(realPath))
+            break
+
       proc = execFile(python, args, (error, stdout, stderr) ->
         if error?
           if stderr? and stderr != ''
@@ -341,11 +339,30 @@ sendHeartbeat = (file, lineno, isWrite) ->
           if stdout? and stdout != ''
             console.warn stdout
           if proc.exitCode == 102
-            console.warn 'Warning: api error (102); Check your ~/.wakatime.log file for more details.'
+            msg = null
+            status = null
+            title = 'WakaTime Offline, coding activity will sync when online.'
           else if proc.exitCode == 103
-            console.warn 'Warning: config parsing error (103); Check your ~/.wakatime.log file for more details.'
+            msg = 'An error occured while parsing ~/.wakatime.cfg. Check ~/.wakatime.log for more info.'
+            status = 'Error'
+            title = msg
+          else if proc.exitCode == 104
+            msg = 'Invalid API Key. Make sure your API Key is correct!'
+            status = 'Error'
+            title = msg
           else
-            console.warn error
+            msg = error
+            status = 'Error'
+            title = 'Unknown Error (' + proc.exitCode + '); Check your Dev Console and ~/.wakatime.log for more info.'
+
+          console.warn msg
+          statusBarTileView?.setStatus(status)
+          statusBarTileView?.setTitle(title)
+
+        else
+          statusBarTileView?.setStatus()
+          today = new Date()
+          statusBarTileView?.setTitle('Last heartbeat sent ' + formatDate(today))
       )
       lastHeartbeat = time
       lastFile = file.path
@@ -366,3 +383,30 @@ endsWith = (str, suffix) ->
   if str? and suffix?
     return str.indexOf(suffix, str.length - suffix.length) != -1
   return false
+
+formatDate = (date) ->
+  months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+  ]
+  ampm = 'AM'
+  hour = date.getHours()
+  if (hour > 11)
+      ampm = 'PM'
+      hour = hour - 12
+  if (hour == 0)
+      hour = 12
+  minute = date.getMinutes()
+  if (minute < 10)
+    minute = '0' + minute
+  return months[date.getMonth()] + ' ' + date.getDate() + ', ' + date.getFullYear() + ' ' + hour + ':' + minute + ' ' + ampm
